@@ -1,5 +1,17 @@
 local M = {}
 
+-- Default configuration
+M.config = {
+  keymaps = {
+    show_help = "<leader>q",
+  },
+  floating_window = {
+    width = 30,
+    height = 2,
+    border = 'single',
+  },
+}
+
 function M.show_help()
     -- Create a buffer
     local buf = vim.api.nvim_create_buf(false, true)
@@ -8,12 +20,12 @@ function M.show_help()
     -- Configure the floating window
     local opts = {
         relative = 'cursor',  -- Position near the cursor
-        width = 30,
-        height = 2,
+        width = M.config.floating_window.width,
+        height = M.config.floating_window.height,
         row = 1,              -- 1 row below cursor
         col = 0,
         style = 'minimal',
-        border = 'single',    -- Add a border
+        border = M.config.floating_window.border,
     }
     -- Open the window
     local win = vim.api.nvim_open_win(buf, true, opts)
@@ -21,7 +33,17 @@ function M.show_help()
     vim.api.nvim_buf_set_keymap(buf, 'n', '<esc>', '<cmd>lua vim.api.nvim_win_close('..win..', true)<cr>', {noremap = true, silent = true})
 end
 
--- Set a keybinding
-vim.api.nvim_set_keymap('n', '<leader>q', '<cmd>lua require("nvim-buddy").show_help()<cr>', {noremap = true, silent = true})
+-- Setup function that lazy.nvim will call
+function M.setup(opts)
+    -- Merge user config with defaults
+    if opts then
+        M.config = vim.tbl_deep_extend("force", M.config, opts)
+    end
+
+    -- Set a keybinding if enabled
+    if M.config.keymaps.show_help then
+        vim.keymap.set('n', M.config.keymaps.show_help, function() require("nvim-buddy").show_help() end, {noremap = true, silent = true})
+    end
+end
 
 return M
