@@ -18,22 +18,6 @@ A simple Neovim plugin that provides an interactive floating window with ASCII a
     require("nvim-buddy").setup()
   end,
 }
-
-### Local Development with lazy.nvim
-
-For local development with lazy.nvim, you can use the `dir` option to specify the local path and enable `dev` mode:
-
-```lua
-{
-  "jarenm1/nvim-buddy",
-  dir = "~/projects/nvim-buddy", -- Adjust path to your local directory
-  dev = true,                    -- Enable dev mode
-  config = function()
-    require("nvim-buddy").setup({
-      -- Your configuration
-    })
-  end,
-}
 ```
 
 ### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
@@ -126,7 +110,24 @@ cute bunny
 (\_/)  
 (o.o)^
 ```
+## Development
 
+### Local Development with lazy.nvim
+
+For local development with lazy.nvim, you can use the `dir` option to specify the local path and enable `dev` mode:
+
+```lua
+{
+  "jarenm1/nvim-buddy",
+  dir = "~/projects/nvim-buddy", -- Adjust path to your local directory
+  dev = true,                    -- Enable dev mode
+  config = function()
+    require("nvim-buddy").setup({
+      -- Your configuration
+    })
+  end,
+}
+```
 
 ## License
 
