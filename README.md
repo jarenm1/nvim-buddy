@@ -13,25 +13,9 @@ A simple Neovim plugin that provides an interactive floating window with ASCII a
 
 ```lua
 {
-  "yourusername/nvim-buddy",
+  "jarenm1/nvim-buddy",
   config = function()
-    require("nvim-buddy").setup({
-      -- Optional: override default settings
-      -- keymaps = {
-      --   show_input = "<leader>i", -- Change default keymap
-      -- },
-      -- input_window = {
-      --   width = 60,              -- Customize window width
-      --   height = 12,             -- Customize window height
-      --   border = "double",       -- Border style: 'none', 'single', 'double', 'rounded'
-      --   ascii_art = [[
-      --     /\_/\  
-      --    ( o.o ) 
-      --     > ^ <  
-      --   ]],
-      --   greeting = "Hello! How can I assist you today?",
-      -- }
-    })
+    require("nvim-buddy").setup()
   end,
 }
 
@@ -41,7 +25,7 @@ For local development with lazy.nvim, you can use the `dir` option to specify th
 
 ```lua
 {
-  "nvim-buddy",
+  "jarenm1/nvim-buddy",
   dir = "~/projects/nvim-buddy", -- Adjust path to your local directory
   dev = true,                    -- Enable dev mode
   config = function()
@@ -52,49 +36,12 @@ For local development with lazy.nvim, you can use the `dir` option to specify th
 }
 ```
 
-Add this to your lazy.nvim configuration file (e.g., `~/.config/nvim/lua/plugins.lua`).
-
-For a complete setup, considering adding this to your Neovim configuration:
-
-```lua
--- In your init.lua or similar file
-local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
-if not vim.loop.fs_stat(lazypath) then
-  vim.fn.system({
-    "git",
-    "clone",
-    "--filter=blob:none",
-    "https://github.com/folke/lazy.nvim.git",
-    "--branch=stable",
-    lazypath,
-  })
-end
-vim.opt.rtp:prepend(lazypath)
-
--- Setup lazy.nvim with plugins
-require("lazy").setup({
-  {
-    "nvim-buddy",
-    dir = vim.fn.expand("~/projects/nvim-buddy"), -- Adjust path to your local directory
-    dev = true,
-    config = function()
-      require("nvim-buddy").setup()
-    end,
-  },
-  -- Your other plugins...
-})
-```
-
-With this setup, lazy.nvim will:
-1. Load your plugin from the local directory
-2. Automatically reload the plugin when files change (due to `dev = true`)
-3. Apply proper isolation for development
-
 ### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
+idk if this works i dont use packer, claude cooked this up.
 
 ```lua
 use {
-  "yourusername/nvim-buddy",
+  "jarenm1/nvim-buddy",
   config = function()
     require("nvim-buddy").setup()
   end
@@ -108,21 +55,78 @@ You can customize the plugin by passing options to the setup function:
 ```lua
 require("nvim-buddy").setup({
   keymaps = {
-    show_input = "<leader>b", -- Set to false to disable the keymap
+    show_input = "<leader>q", -- Set to keymap you want to use
   },
   input_window = {
     width = 50,
     height = 10,
     border = "rounded", -- Border style: 'none', 'single', 'double', 'rounded'
     ascii_art = [[
-      /\_/\  
-     ( o.o ) 
-      > ^ <  
-    ]],
-    greeting = "What can I help you with?",
+ /\_/\  
+( o.o ) 
+ ]],
+    greeting = "What can I help you with? :3",
+    colors = {
+      art = "String", -- Art color
+      greeting = "Title", -- Greeting color: Title (usually bold)
+      divider = "NonText", -- Divider color
+    },
   },
 })
 ```
+
+## Art Colors
+Art colors are the colors used for the ASCII art in the input window. Will change colors based on your theme.
+- `String`
+- `Comment`
+- `Special`
+- `WarningMsg`
+- `Error` (usually highlighted)
+- `Todo`
+- `Function`
+- `Type`
+- `Identifier`
+- `Title` (usually bold)
+
+## ASCII Art!
+
+You can add your own ASCII art by setting the `ascii_art` option in the configuration.
+
+There may be plans to add some sort of 'active' ascii art that changes based on the context.
+
+### Examples
+
+kitty
+```text
+ /\_/\  
+( o.o )
+```
+dumb kitty
+```text
+ /\_/\  
+(o . o)
+```
+bunny
+```text
+(\_/)
+(o.o)
+```
+cute bunny
+```text
+(\_/)  
+(>.>)
+```
+ sleepy bunny
+```text
+(\_/)  
+(-.-)
+```
+ bunny with carrot :O
+```text
+(\_/)  
+(o.o)^
+```
+
 
 ## License
 

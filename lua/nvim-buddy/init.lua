@@ -1,5 +1,9 @@
 local M = {}
 
+-- Import our new modules
+local context = require('nvim-buddy.context')
+local picker = require('nvim-buddy.picker')
+
 -- Default configuration
 M.config = {
   keymaps = {
@@ -10,10 +14,10 @@ M.config = {
     height = 8,  -- Increased to accommodate more visible lines
     border = 'rounded',
     ascii_art = [[
- /\_/\  
-( o.o ) 
-    ]],
-    greeting = "What can I help you with?",
+(\_/)
+(o.o) 
+ ]],
+    greeting = "What can I help you with? :3",
     colors = {
       art = "String", -- Default highlight group for ASCII art (usually green)
       greeting = "Title", -- Changed to Title for better visibility (usually bold/yellow)
@@ -155,6 +159,85 @@ function M.show_input_window()
         
         -- Buffer is ready for user input
         vim.api.nvim_buf_set_option(content_buf, 'modifiable', true)
+        
+        -- Set up @ context trigger using a simpler but more reliable approach
+        vim.keymap.set('i', '@', function()
+            -- First let's just return @ to insert it normally
+            local result = "@"
+            
+            -- Then show the picker, but only after @ is inserted
+            vim.schedule(function()
+                -- Get current buffer and cursor position after @ is inserted
+                local buf = vim.api.nvim_get_current_buf()
+                local win = vim.api.nvim_get_current_win()
+                
+                picker.pick_file(function(filename, content, file_path)
+                    if content then
+                        -- Store the context
+                        context.add_context(filename, content)
+                        
+                        -- We need to properly position the cursor after the @ symbol
+                        -- First get current line content
+                        local cursor_pos = vim.api.nvim_win_get_cursor(win)
+                        local line = vim.api.nvim_buf_get_lines(buf, cursor_pos[1]-1, cursor_pos[1], false)[1]
+                        
+                        -- Find the last @ symbol in the current line
+                        local last_at = line:find("@[^@]*$")
+                        if last_at then
+                            -- Position cursor right after the @ symbol
+                            vim.api.nvim_win_set_cursor(win, {cursor_pos[1], last_at})
+                            
+                            -- Insert the filename at this position
+                            vim.cmd("normal! a" .. filename)
+                            
+                            -- Return to insert mode at end of insertion
+                            vim.cmd('startinsert!')
+                        else
+                            -- If we can't find @, fall back to just appending at current position
+                            vim.api.nvim_put({filename}, 'c', true, true)
+                            vim.cmd('startinsert!')
+                        end
+                        
+                        -- Notify the user
+                        vim.notify("Added context from " .. file_path, vim.log.levels.INFO)
+                    end
+                end)
+            end)
+            
+            return result
+        end, {buffer = content_buf, expr = true})
+        
+        -- Process the message when user presses Enter
+        vim.keymap.set('i', '<CR>', function()
+            -- Get all text from buffer
+            local lines = vim.api.nvim_buf_get_lines(content_buf, 0, -1, false)
+            local input_text = table.concat(lines, "\n")
+            
+            -- Process input to include contexts
+            local processed = context.process_input(input_text)
+            
+            -- Print what would be sent (for demonstration)
+            print("\nMessage with context references:")
+            print(processed.text)
+            print("\nIncluded contexts:")
+            for _, ctx in ipairs(processed.contexts) do
+                print("- " .. ctx.identifier .. " (" .. #ctx.content .. " bytes)")
+            end
+            
+            -- TODO: In the future, this is where you would send the processed
+            -- message and contexts to your message handling system
+            
+            -- Clear input for next message
+            vim.api.nvim_buf_set_lines(content_buf, 0, -1, false, {""})
+            
+            -- Clear stored contexts
+            context.clear_contexts()
+            
+            -- Keep in insert mode
+            vim.cmd('startinsert!')
+            
+            return ""
+        end, {buffer = content_buf, expr = true})
         
         -- Store both windows in global table for cleanup
         _G.nvim_buddy_windows = _G.nvim_buddy_windows or {}
