@@ -226,20 +226,12 @@ function M.show_input_window()
                         -- Add the file content to the backend context
                         M.backend.add_file_context(identifier, file_path)
                         
-                        -- We need to properly position the cursor after the @ symbol
-                        -- First get current line content
-                        local prompt_buf = vim.api.nvim_get_current_buf()
-                        local row, col = unpack(vim.api.nvim_win_get_cursor(win))
-                        local line = vim.api.nvim_buf_get_lines(prompt_buf, row-1, row, false)[1] or ""
+                        -- Simply insert the brackets and filename right at the cursor
+                        -- The @ is already in the buffer, we just append to it
+                        vim.cmd('normal! a[' .. identifier .. ']')
                         
-                        -- Create new line with file reference
-                        local before_cursor = string.sub(line, 1, col)
-                        local after_cursor = string.sub(line, col + 1)
-                        local new_line = before_cursor .. "@[" .. identifier .. "]" .. after_cursor
-                        
-                        -- Update buffer and move cursor to after the reference
-                        vim.api.nvim_buf_set_lines(prompt_buf, row-1, row, false, {new_line})
-                        vim.api.nvim_win_set_cursor(win, {row, col + 3 + #identifier + 1})
+                        -- Return to insert mode
+                        vim.cmd('startinsert!')
                     end
                 end)
             end)
@@ -275,46 +267,6 @@ function M.show_input_window()
             
             -- Return empty string so the Enter key doesn't insert a newline
             return ""
-        end, {buffer = content_buf, expr = true})
-        
-        -- Map Tab to show file picker when '@' is typed
-        vim.keymap.set('i', '@', function()
-            -- First let's just return @ to insert it normally
-            local result = "@"
-            
-            -- Then show the picker, but only after @ is inserted
-            vim.schedule(function()
-                -- Get current buffer and cursor position after @ is inserted
-                local buf = vim.api.nvim_get_current_buf()
-                local win = vim.api.nvim_get_current_win()
-                
-                picker.pick_file(function(file_path)
-                    if file_path then
-                        -- Store the file path instead of content
-                        local identifier = vim.fn.fnamemodify(file_path, ":t")
-                        
-                        -- Add the file content to the backend context
-                        M.backend.add_file_context(identifier, file_path)
-                        
-                        -- We need to properly position the cursor after the @ symbol
-                        -- First get current line content
-                        local prompt_buf = vim.api.nvim_get_current_buf()
-                        local row, col = unpack(vim.api.nvim_win_get_cursor(win))
-                        local line = vim.api.nvim_buf_get_lines(prompt_buf, row-1, row, false)[1] or ""
-                        
-                        -- Create new line with file reference
-                        local before_cursor = string.sub(line, 1, col)
-                        local after_cursor = string.sub(line, col + 1)
-                        local new_line = before_cursor .. "@[" .. identifier .. "]" .. after_cursor
-                        
-                        -- Update buffer and move cursor to after the reference
-                        vim.api.nvim_buf_set_lines(prompt_buf, row-1, row, false, {new_line})
-                        vim.api.nvim_win_set_cursor(win, {row, col + 3 + #identifier + 1})
-                    end
-                end)
-            end)
-            
-            return result
         end, {buffer = content_buf, expr = true})
         
         -- Store both windows in global table for cleanup
