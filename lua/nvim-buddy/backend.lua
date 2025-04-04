@@ -316,9 +316,14 @@ function M.process_buffer(bufnr, header_bufnr)
               local header_lines = vim.api.nvim_buf_get_lines(header_bufnr, 0, -1, false)
               
               for i, line in ipairs(header_lines) do
+                -- Look for the line with "thinking..." with or without any spinner
                 if line:match("thinking...") then
                   spinner_idx = (spinner_idx % #spinner_frames) + 1
-                  local new_line = line:gsub("thinking...", "thinking... " .. spinner_frames[spinner_idx])
+                  
+                  -- Replace the entire line with new version - this ensures we don't accumulate symbols
+                  local base_line = line:gsub("thinking...%s*%S*", "thinking...")
+                  local new_line = base_line .. " " .. spinner_frames[spinner_idx]
+                  
                   vim.api.nvim_buf_set_lines(header_bufnr, i-1, i, false, {new_line})
                   break
                 end
@@ -361,9 +366,23 @@ function M.process_buffer(bufnr, header_bufnr)
               local header_lines = vim.api.nvim_buf_get_lines(header_bufnr, 0, -1, false)
               
               for i, line in ipairs(header_lines) do
+                -- Look for any line with "thinking..." with or without spinner
                 if line:match("thinking...") then
-                  local new_line = line:gsub("thinking... %S*", "What can I help you with?")
+                  -- Use the original greeting text without any modification
+                  local new_line = line:gsub("thinking...%s*%S*", "What can I help you with?")
                   vim.api.nvim_buf_set_lines(header_bufnr, i-1, i, false, {new_line})
+                  
+                  -- Restore greeting highlight if needed
+                  local greeting_ns = vim.api.nvim_create_namespace('nvim_buddy_greeting')
+                  pcall(function()
+                    vim.api.nvim_buf_clear_namespace(header_bufnr, greeting_ns, i-1, i)
+                    local greeting_start = new_line:find("What can I help you with?")
+                    if greeting_start then
+                      vim.api.nvim_buf_add_highlight(header_bufnr, greeting_ns, "Title", 
+                                                   i-1, greeting_start-1, greeting_start+#"What can I help you with?")
+                    end
+                  end)
+                  
                   break
                 end
               end
