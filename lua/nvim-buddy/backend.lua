@@ -64,14 +64,63 @@ local function get_api_url()
   return url
 end
 
--- Function to get the prompt from the current buffer
+-- Get current line from the cursor position in buffer
 local function get_prompt_from_buffer(bufnr)
+  -- Get current cursor position
   bufnr = bufnr or vim.api.nvim_get_current_buf()
+  
+  -- Check if buffer is valid
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    vim.notify("Invalid buffer for getting prompt", vim.log.levels.ERROR)
+    return ""
+  end
+  
+  local current_win = nil
+  -- Find a window showing this buffer
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      current_win = win
+      break
+    end
+  end
+  
+  if not current_win then
+    -- If no window is showing the buffer, try to get all lines
+    return old_get_prompt_from_buffer(bufnr)
+  end
+  
+  -- Get the current line under cursor
+  local cursor_pos = vim.api.nvim_win_get_cursor(current_win)
+  local current_line = vim.api.nvim_buf_get_lines(bufnr, cursor_pos[1]-1, cursor_pos[1], false)[1] or ""
+  
+  -- Check if the line is empty
+  if current_line:match("^%s*$") then
+    -- Line is empty or whitespace only, use legacy method to get full buffer
+    return old_get_prompt_from_buffer(bufnr)
+  end
+  
+  -- Trim whitespace and return the line
+  return current_line:match("^%s*(.-)%s*$")
+end
+
+-- Legacy function to get all buffer content as prompt
+local function old_get_prompt_from_buffer(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  
+  -- Check if buffer is valid
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    vim.notify("Invalid buffer for getting prompt", vim.log.levels.ERROR)
+    return ""
+  end
+  
+  -- Get all lines from the buffer
   local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  
+  -- Concatenate lines to get the full content
   return table.concat(lines, "\n")
 end
 
--- Function to append text to a buffer
+-- Function to append text to a buffer with improved formatting
 local function append_to_buffer(text, bufnr)
   bufnr = bufnr or vim.api.nvim_get_current_buf()
   
@@ -87,12 +136,44 @@ local function append_to_buffer(text, bufnr)
     vim.api.nvim_buf_set_option(bufnr, 'modifiable', true)
   end
   
-  -- Get current line count and append text
+  -- Get current content
   local line_count = vim.api.nvim_buf_line_count(bufnr)
+  local last_line = ""
+  if line_count > 0 then
+    last_line = vim.api.nvim_buf_get_lines(bufnr, line_count - 1, line_count, false)[1] or ""
+  end
   
-  -- Split text by newlines and append all lines
-  local lines = vim.split(text, "\n")
-  vim.api.nvim_buf_set_lines(bufnr, line_count, line_count, false, lines)
+  -- Process the text to handle newlines properly
+  local lines = {}
+  if text:find("\n") then
+    -- Text contains newlines, split it
+    local text_lines = vim.split(text, "\n")
+    
+    -- Handle the first line - append to the last line of the buffer
+    if #text_lines > 0 then
+      if line_count > 0 then
+        -- Append first line to last line in buffer
+        vim.api.nvim_buf_set_lines(bufnr, line_count - 1, line_count, false, {last_line .. text_lines[1]})
+      else
+        -- Buffer was empty, add first line
+        vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, {text_lines[1]})
+      end
+      
+      -- Add remaining lines
+      if #text_lines > 1 then
+        for i = 2, #text_lines do
+          vim.api.nvim_buf_set_lines(bufnr, line_count - 1 + (i-1), line_count - 1 + (i-1), false, {text_lines[i]})
+        end
+      end
+    end
+  else
+    -- No newlines, just append to the last line
+    if line_count > 0 then
+      vim.api.nvim_buf_set_lines(bufnr, line_count - 1, line_count, false, {last_line .. text})
+    else
+      vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, {text})
+    end
+  end
   
   -- Get window that shows the buffer and move cursor to end if possible
   for _, win in ipairs(vim.api.nvim_list_wins()) do
@@ -426,10 +507,14 @@ function M.process_buffer(bufnr, header_bufnr)
                 is_first_response = false
                 vim.api.nvim_buf_set_option(bufnr, 'modifiable', true)
                 vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {})
+                
+                -- Process the text to remove leading/trailing whitespace
+                local cleaned_text = chunk:gsub("^%s+", ""):gsub("%s+$", "")
+                append_to_buffer(cleaned_text, bufnr)
+              else
+                -- Process subsequent chunks
+                append_to_buffer(chunk, bufnr)
               end
-              
-              -- Append the chunk to the buffer
-              append_to_buffer(chunk, bufnr)
             end)
           end
         end)
