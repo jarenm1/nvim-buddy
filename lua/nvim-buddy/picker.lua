@@ -227,14 +227,13 @@ function M.select_item()
   if idx > 0 and idx <= #filtered then
     local selected = filtered[idx]
     local file_path = selected.value
-    local content = context.read_file_content(file_path)
     
     -- Close window
     M.close()
     
     -- Call callback with selected file
     if M.state.callback then
-      M.state.callback(selected.filename, content, file_path)
+      M.state.callback(file_path)
     end
   end
 end

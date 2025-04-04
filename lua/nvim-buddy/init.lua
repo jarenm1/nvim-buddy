@@ -1,8 +1,10 @@
+-- nvim-buddy main module
 local M = {}
 
 -- Import our new modules
 local context = require('nvim-buddy.context')
 local picker = require('nvim-buddy.picker')
+local backend = require('nvim-buddy.backend')
 
 -- Default configuration
 M.config = {
@@ -11,21 +13,41 @@ M.config = {
   },
   input_window = {
     width = 60,  -- Width to accommodate side-by-side layout
-    height = 8,  -- Increased to accommodate more visible lines
+    height = 16,  -- Increased to accommodate more visible lines
     border = 'rounded',
     ascii_art = [[
 (\_/)
 (o.o) 
  ]],
-    greeting = "What can I help you with? :3",
+    greeting = "What can I help you with?",
     colors = {
       art = "String", -- Default highlight group for ASCII art (usually green)
       greeting = "Title", -- Changed to Title for better visibility (usually bold/yellow)
       divider = "NonText", -- Default highlight group for divider
     },
-    visible_lines = 4,  -- Show this many lines before scrolling
+    visible_lines = 12,  -- Show this many lines before scrolling
   },
+  backend = {
+    provider = "openai",                  -- Provider: "openai" or "gemini"
+    openai = {
+      api_key = nil,                      -- Your OpenAI API key (or set OPENAI_API_KEY env variable)
+      model = "gpt-3.5-turbo",            -- Default model
+      endpoint = "https://api.openai.com/v1/chat/completions", -- OpenAI endpoint
+      max_tokens = 1000,                  -- Maximum number of tokens to generate
+    },
+    gemini = {
+      api_key = nil,                      -- Your Gemini API key (or set GEMINI_API_KEY env variable)
+      model = "gemini-pro",               -- Default model
+      endpoint = "https://generativelanguage.googleapis.com/v1beta/models/", -- Base Gemini endpoint
+      max_output_tokens = 1000,           -- Maximum number of tokens to generate
+    },
+    timeout = 30000,                      -- Timeout in milliseconds
+    streaming = true,                     -- Enable streaming by default
+  }
 }
+
+-- Add request state tracking
+M.is_request_in_progress = false
 
 function M.show_input_window()
     -- Use pcall to catch any errors during initialization
@@ -129,7 +151,7 @@ function M.show_input_window()
             relative = 'win',
             win = main_win,
             width = main_win_width - (window_padding * 2), -- Account for left and right padding
-            height = M.config.input_window.visible_lines, -- Use the configured visible lines
+            height = main_win_height - header_height,
             row = header_height,
             col = window_padding, -- Left padding
             style = 'minimal',
@@ -171,10 +193,11 @@ function M.show_input_window()
                 local buf = vim.api.nvim_get_current_buf()
                 local win = vim.api.nvim_get_current_win()
                 
-                picker.pick_file(function(filename, content, file_path)
-                    if content then
-                        -- Store the context
-                        context.add_context(filename, content)
+                picker.pick_file(function(file_path)
+                    if file_path then
+                        -- Store the file path instead of content
+                        local identifier = vim.fn.fnamemodify(file_path, ":t")
+                        context.add_context(identifier, file_path)
                         
                         -- We need to properly position the cursor after the @ symbol
                         -- First get current line content
@@ -188,18 +211,18 @@ function M.show_input_window()
                             vim.api.nvim_win_set_cursor(win, {cursor_pos[1], last_at})
                             
                             -- Insert the filename at this position
-                            vim.cmd("normal! a" .. filename)
+                            vim.cmd("normal! a" .. identifier)
                             
                             -- Return to insert mode at end of insertion
                             vim.cmd('startinsert!')
                         else
                             -- If we can't find @, fall back to just appending at current position
-                            vim.api.nvim_put({filename}, 'c', true, true)
+                            vim.api.nvim_put({identifier}, 'c', true, true)
                             vim.cmd('startinsert!')
                         end
                         
                         -- Notify the user
-                        vim.notify("Added context from " .. file_path, vim.log.levels.INFO)
+                        vim.notify("Added context reference to " .. file_path, vim.log.levels.INFO)
                     end
                 end)
             end)
@@ -213,30 +236,76 @@ function M.show_input_window()
             local lines = vim.api.nvim_buf_get_lines(content_buf, 0, -1, false)
             local input_text = table.concat(lines, "\n")
             
-            -- Process input to include contexts
-            local processed = context.process_input(input_text)
-            
-            -- Print what would be sent (for demonstration)
-            print("\nMessage with context references:")
-            print(processed.text)
-            print("\nIncluded contexts:")
-            for _, ctx in ipairs(processed.contexts) do
-                print("- " .. ctx.identifier .. " (" .. #ctx.content .. " bytes)")
+            -- Skip if input is empty
+            if input_text:gsub("%s", "") == "" then
+                return ""
             end
             
-            -- TODO: In the future, this is where you would send the processed
-            -- message and contexts to your message handling system
+            -- Skip if a request is already in progress
+            if M.is_request_in_progress then
+                vim.notify("A request is already in progress", vim.log.levels.WARN)
+                return ""
+            end
             
-            -- Clear input for next message
-            vim.api.nvim_buf_set_lines(content_buf, 0, -1, false, {""})
+            -- Set the request in progress flag
+            M.is_request_in_progress = true
             
-            -- Clear stored contexts
-            context.clear_contexts()
+            -- Make buffer unmodifiable during request
+            vim.api.nvim_buf_set_option(content_buf, 'modifiable', false)
             
-            -- Keep in insert mode
-            vim.cmd('startinsert!')
+            -- Use the backend's process_buffer function to handle streaming
+            backend.process_buffer(content_buf, header_buf)
             
+            -- Return empty string so the Enter key doesn't insert a newline
             return ""
+        end, {buffer = content_buf, expr = true})
+        
+        -- Map Tab to show file picker when '@' is typed
+        vim.keymap.set('i', '@', function()
+            -- First let's just return @ to insert it normally
+            local result = "@"
+            
+            -- Then show the picker, but only after @ is inserted
+            vim.schedule(function()
+                -- Get current buffer and cursor position after @ is inserted
+                local buf = vim.api.nvim_get_current_buf()
+                local win = vim.api.nvim_get_current_win()
+                
+                picker.pick_file(function(file_path)
+                    if file_path then
+                        -- Store the file path instead of content
+                        local identifier = vim.fn.fnamemodify(file_path, ":t")
+                        context.add_context(identifier, file_path)
+                        
+                        -- We need to properly position the cursor after the @ symbol
+                        -- First get current line content
+                        local cursor_pos = vim.api.nvim_win_get_cursor(win)
+                        local line = vim.api.nvim_buf_get_lines(buf, cursor_pos[1]-1, cursor_pos[1], false)[1]
+                        
+                        -- Find the last @ symbol in the current line
+                        local last_at = line:find("@[^@]*$")
+                        if last_at then
+                            -- Position cursor right after the @ symbol
+                            vim.api.nvim_win_set_cursor(win, {cursor_pos[1], last_at})
+                            
+                            -- Insert the filename at this position
+                            vim.cmd("normal! a" .. identifier)
+                            
+                            -- Return to insert mode at end of insertion
+                            vim.cmd('startinsert!')
+                        else
+                            -- If we can't find @, fall back to just appending at current position
+                            vim.api.nvim_put({identifier}, 'c', true, true)
+                            vim.cmd('startinsert!')
+                        end
+                        
+                        -- Notify the user
+                        vim.notify("Added context reference to " .. file_path, vim.log.levels.INFO)
+                    end
+                end)
+            end)
+            
+            return result
         end, {buffer = content_buf, expr = true})
         
         -- Store both windows in global table for cleanup
@@ -352,7 +421,7 @@ function M.show_input_window()
         
         -- Focus the content window and enter insert mode
         vim.api.nvim_set_current_win(content_win)
-        vim.cmd('startinsert')
+        vim.cmd('startinsert!')
     end)
     
     if not ok then
@@ -395,6 +464,24 @@ function M.setup(opts)
     -- Merge user config with defaults
     if opts then
         M.config = vim.tbl_deep_extend("force", M.config, opts)
+    end
+    
+    -- Initialize backend module if needed
+    if backend then
+        -- Make sure we're sending a valid table to backend.setup
+        -- If backend config exists in opts, use that, otherwise create empty table
+        local backend_opts = {}
+        if opts and type(opts) == "table" and opts.backend and type(opts.backend) == "table" then
+            backend_opts = opts.backend
+        end
+        
+        -- If provider is specified at top level but not in backend config, move it
+        if opts and type(opts) == "table" and opts.provider and not backend_opts.provider then
+            backend_opts.provider = opts.provider
+        end
+        
+        -- Set up the backend with proper config
+        backend.setup(backend_opts)
     end
     
     -- Set keybinding for input window if enabled
