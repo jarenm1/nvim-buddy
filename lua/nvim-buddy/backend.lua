@@ -81,9 +81,11 @@ local function append_to_buffer(text, bufnr)
     return false
   end
   
-  -- Make buffer modifiable
+  -- Make buffer modifiable (but don't restore - keep it modifiable)
   local was_modifiable = vim.api.nvim_buf_get_option(bufnr, 'modifiable')
-  vim.api.nvim_buf_set_option(bufnr, 'modifiable', true)
+  if not was_modifiable then
+    vim.api.nvim_buf_set_option(bufnr, 'modifiable', true)
+  end
   
   -- Get current line count and append text
   local line_count = vim.api.nvim_buf_line_count(bufnr)
@@ -102,8 +104,7 @@ local function append_to_buffer(text, bufnr)
     end
   end
   
-  -- Restore modifiable state
-  vim.api.nvim_buf_set_option(bufnr, 'modifiable', was_modifiable)
+  -- Do NOT restore modifiable state - keep it modifiable
   return true
 end
 
@@ -139,9 +140,12 @@ function M.send_message(message, callback, on_chunk)
   local job = Job:new({
     command = 'curl',
     args = {
+      '-s',  -- Silent mode
+      '-S',  -- Show error even in silent mode
+      '--no-progress-meter', -- Explicitly disable progress meter
+      '--no-buffer',  -- Ensures real-time streaming
       url,
       '-H', 'Content-Type: application/json',
-      '--no-buffer',  -- Ensures real-time streaming
       '-d', request_body
     },
     on_stdout = function(_, data)
@@ -388,7 +392,7 @@ function M.process_buffer(bufnr, header_bufnr)
                   vim.api.nvim_buf_set_lines(bufnr, 1, 1, false, 
                                           {"Details: " .. response.details})
                 end
-                vim.api.nvim_buf_set_option(bufnr, 'modifiable', false)
+                -- Do NOT set modifiable to false
               end)
             end
           end)
