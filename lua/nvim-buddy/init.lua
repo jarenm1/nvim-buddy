@@ -4,7 +4,9 @@ local M = {}
 -- Import our new modules
 local context = require('nvim-buddy.context')
 local picker = require('nvim-buddy.picker')
-local backend = require('nvim-buddy.backend')
+
+-- Initialize backend
+M.backend = require("nvim-buddy.backend")
 
 -- Default configuration
 M.config = {
@@ -48,6 +50,29 @@ M.config = {
 
 -- Add request state tracking
 M.is_request_in_progress = false
+
+-- Plugin setup function
+function M.setup(opts)
+  opts = opts or {}
+  
+  -- Merge configuration
+  if opts and type(opts) == "table" then
+    M.config = vim.tbl_deep_extend("force", M.config, opts)
+  end
+  
+  -- Make sure backend is loaded
+  if not M.backend then
+    M.backend = require("nvim-buddy.backend")
+  end
+  
+  -- Initialize the backend
+  M.backend.setup(opts)
+  
+  -- Set keybinding for input window if enabled
+  if M.config.keymaps.show_input then
+    vim.keymap.set('n', M.config.keymaps.show_input, function() require("nvim-buddy").show_input_window() end, {noremap = true, silent = true})
+  end
+end
 
 function M.show_input_window()
     -- Use pcall to catch any errors during initialization
@@ -197,32 +222,24 @@ function M.show_input_window()
                     if file_path then
                         -- Store the file path instead of content
                         local identifier = vim.fn.fnamemodify(file_path, ":t")
-                        context.add_context(identifier, file_path)
+                        
+                        -- Add the file content to the backend context
+                        M.backend.add_file_context(identifier, file_path)
                         
                         -- We need to properly position the cursor after the @ symbol
                         -- First get current line content
-                        local cursor_pos = vim.api.nvim_win_get_cursor(win)
-                        local line = vim.api.nvim_buf_get_lines(buf, cursor_pos[1]-1, cursor_pos[1], false)[1]
+                        local prompt_buf = vim.api.nvim_get_current_buf()
+                        local row, col = unpack(vim.api.nvim_win_get_cursor(win))
+                        local line = vim.api.nvim_buf_get_lines(prompt_buf, row-1, row, false)[1] or ""
                         
-                        -- Find the last @ symbol in the current line
-                        local last_at = line:find("@[^@]*$")
-                        if last_at then
-                            -- Position cursor right after the @ symbol
-                            vim.api.nvim_win_set_cursor(win, {cursor_pos[1], last_at})
-                            
-                            -- Insert the filename at this position
-                            vim.cmd("normal! a" .. identifier)
-                            
-                            -- Return to insert mode at end of insertion
-                            vim.cmd('startinsert!')
-                        else
-                            -- If we can't find @, fall back to just appending at current position
-                            vim.api.nvim_put({identifier}, 'c', true, true)
-                            vim.cmd('startinsert!')
-                        end
+                        -- Create new line with file reference
+                        local before_cursor = string.sub(line, 1, col)
+                        local after_cursor = string.sub(line, col + 1)
+                        local new_line = before_cursor .. "@[" .. identifier .. "]" .. after_cursor
                         
-                        -- Notify the user
-                        vim.notify("Added context reference to " .. file_path, vim.log.levels.INFO)
+                        -- Update buffer and move cursor to after the reference
+                        vim.api.nvim_buf_set_lines(prompt_buf, row-1, row, false, {new_line})
+                        vim.api.nvim_win_set_cursor(win, {row, col + 3 + #identifier + 1})
                     end
                 end)
             end)
@@ -254,7 +271,7 @@ function M.show_input_window()
             vim.api.nvim_buf_set_option(content_buf, 'modifiable', false)
             
             -- Use the backend's process_buffer function to handle streaming
-            backend.process_buffer(content_buf, header_buf)
+            M.backend.process_buffer(content_buf, header_buf)
             
             -- Return empty string so the Enter key doesn't insert a newline
             return ""
@@ -275,32 +292,24 @@ function M.show_input_window()
                     if file_path then
                         -- Store the file path instead of content
                         local identifier = vim.fn.fnamemodify(file_path, ":t")
-                        context.add_context(identifier, file_path)
+                        
+                        -- Add the file content to the backend context
+                        M.backend.add_file_context(identifier, file_path)
                         
                         -- We need to properly position the cursor after the @ symbol
                         -- First get current line content
-                        local cursor_pos = vim.api.nvim_win_get_cursor(win)
-                        local line = vim.api.nvim_buf_get_lines(buf, cursor_pos[1]-1, cursor_pos[1], false)[1]
+                        local prompt_buf = vim.api.nvim_get_current_buf()
+                        local row, col = unpack(vim.api.nvim_win_get_cursor(win))
+                        local line = vim.api.nvim_buf_get_lines(prompt_buf, row-1, row, false)[1] or ""
                         
-                        -- Find the last @ symbol in the current line
-                        local last_at = line:find("@[^@]*$")
-                        if last_at then
-                            -- Position cursor right after the @ symbol
-                            vim.api.nvim_win_set_cursor(win, {cursor_pos[1], last_at})
-                            
-                            -- Insert the filename at this position
-                            vim.cmd("normal! a" .. identifier)
-                            
-                            -- Return to insert mode at end of insertion
-                            vim.cmd('startinsert!')
-                        else
-                            -- If we can't find @, fall back to just appending at current position
-                            vim.api.nvim_put({identifier}, 'c', true, true)
-                            vim.cmd('startinsert!')
-                        end
+                        -- Create new line with file reference
+                        local before_cursor = string.sub(line, 1, col)
+                        local after_cursor = string.sub(line, col + 1)
+                        local new_line = before_cursor .. "@[" .. identifier .. "]" .. after_cursor
                         
-                        -- Notify the user
-                        vim.notify("Added context reference to " .. file_path, vim.log.levels.INFO)
+                        -- Update buffer and move cursor to after the reference
+                        vim.api.nvim_buf_set_lines(prompt_buf, row-1, row, false, {new_line})
+                        vim.api.nvim_win_set_cursor(win, {row, col + 3 + #identifier + 1})
                     end
                 end)
             end)
@@ -457,37 +466,6 @@ function M.cleanup_all_windows()
         -- Try to clear any related variables
         collectgarbage("collect")
     end, 100)
-end
-
--- Setup function that lazy.nvim will call
-function M.setup(opts)
-    -- Merge user config with defaults
-    if opts then
-        M.config = vim.tbl_deep_extend("force", M.config, opts)
-    end
-    
-    -- Initialize backend module if needed
-    if backend then
-        -- Make sure we're sending a valid table to backend.setup
-        -- If backend config exists in opts, use that, otherwise create empty table
-        local backend_opts = {}
-        if opts and type(opts) == "table" and opts.backend and type(opts.backend) == "table" then
-            backend_opts = opts.backend
-        end
-        
-        -- If provider is specified at top level but not in backend config, move it
-        if opts and type(opts) == "table" and opts.provider and not backend_opts.provider then
-            backend_opts.provider = opts.provider
-        end
-        
-        -- Set up the backend with proper config
-        backend.setup(backend_opts)
-    end
-    
-    -- Set keybinding for input window if enabled
-    if M.config.keymaps.show_input then
-        vim.keymap.set('n', M.config.keymaps.show_input, function() require("nvim-buddy").show_input_window() end, {noremap = true, silent = true})
-    end
 end
 
 return M

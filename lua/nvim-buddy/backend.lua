@@ -1,124 +1,32 @@
 -- Backend module for nvim-buddy with streamlined API implementation
-local M = {}
-local Job = require('plenary.job')
 
--- Configuration with defaults
-M.config = {
-  provider = "gemini",
-  gemini = {
-    api_key = os.getenv("GEMINI_API_KEY") or nil,
-    model = "gemini-1.5-flash",
-    endpoint = "https://generativelanguage.googleapis.com/v1beta/models/",
-    max_output_tokens = 1000,
+-- Module table
+local M = {
+  config = {
+    provider = "gemini",
+    gemini = {
+      api_key = os.getenv("GEMINI_API_KEY") or nil,
+      model = "gemini-1.5-flash",
+      endpoint = "https://generativelanguage.googleapis.com/v1beta/models/",
+      max_output_tokens = 1000,
+      temperature = 0.7,
+    },
+    debug = true, -- Enable debug mode by default during development
+    streaming = true,
   },
-  debug = false,
-  streaming = true,
+  -- Store file contexts to simplify access
+  file_contexts = {},
 }
 
--- Setup function to configure the module
-function M.setup(opts)
-  if opts then
-    -- Handle case where opts might be a boolean or unexpected type
-    if type(opts) == "table" then
-      -- Deep merge config tables
-      M.config = vim.tbl_deep_extend("force", M.config, opts)
-      
-      -- Handle backward compatibility with old config structure
-      if opts.provider and type(opts.provider) == "string" then
-        M.config.provider = opts.provider
-      end
-    else
-      vim.notify("Invalid configuration format for nvim-buddy backend", vim.log.levels.WARN)
-    end
+-- Debug logging function
+local function log_debug(message)
+  if M.config.debug then
+    print("[nvim-buddy debug] " .. message)
   end
-  
-  -- Attempt to get API key from environment if not explicitly set
-  if not M.config.gemini.api_key then
-    M.config.gemini.api_key = vim.env.GEMINI_API_KEY
-    
-    if not M.config.gemini.api_key or M.config.gemini.api_key == "" then
-      vim.notify('Missing Gemini API key. Set config.gemini.api_key or GEMINI_API_KEY env variable', vim.log.levels.WARN)
-    end
-  end
-  
-  return M
 end
 
--- Get the base URL for API calls
-local function get_api_url()
-  local base = M.config.gemini.endpoint
-  local model = M.config.gemini.model
-  
-  -- Remove trailing slash if present
-  if base:sub(-1) == "/" then
-    base = base:sub(1, -2)
-  end
-  
-  local url = base .. "/" .. model .. ":streamGenerateContent?alt=sse"
-  
-  -- Add API key to URL
-  if M.config.gemini.api_key then
-    url = url .. "&key=" .. M.config.gemini.api_key
-  end
-  
-  return url
-end
-
--- Get current line from the cursor position in buffer
-local function get_prompt_from_buffer(bufnr)
-  -- Get current cursor position
-  bufnr = bufnr or vim.api.nvim_get_current_buf()
-  
-  -- Check if buffer is valid
-  if not vim.api.nvim_buf_is_valid(bufnr) then
-    vim.notify("Invalid buffer for getting prompt", vim.log.levels.ERROR)
-    return ""
-  end
-  
-  local current_win = nil
-  -- Find a window showing this buffer
-  for _, win in ipairs(vim.api.nvim_list_wins()) do
-    if vim.api.nvim_win_get_buf(win) == bufnr then
-      current_win = win
-      break
-    end
-  end
-  
-  if not current_win then
-    -- If no window is showing the buffer, try to get all lines
-    return old_get_prompt_from_buffer(bufnr)
-  end
-  
-  -- Get the current line under cursor
-  local cursor_pos = vim.api.nvim_win_get_cursor(current_win)
-  local current_line = vim.api.nvim_buf_get_lines(bufnr, cursor_pos[1]-1, cursor_pos[1], false)[1] or ""
-  
-  -- Check if the line is empty
-  if current_line:match("^%s*$") then
-    -- Line is empty or whitespace only, use legacy method to get full buffer
-    return old_get_prompt_from_buffer(bufnr)
-  end
-  
-  -- Trim whitespace and return the line
-  return current_line:match("^%s*(.-)%s*$")
-end
-
--- Legacy function to get all buffer content as prompt
-local function old_get_prompt_from_buffer(bufnr)
-  bufnr = bufnr or vim.api.nvim_get_current_buf()
-  
-  -- Check if buffer is valid
-  if not vim.api.nvim_buf_is_valid(bufnr) then
-    vim.notify("Invalid buffer for getting prompt", vim.log.levels.ERROR)
-    return ""
-  end
-  
-  -- Get all lines from the buffer
-  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-  
-  -- Concatenate lines to get the full content
-  return table.concat(lines, "\n")
-end
+-- Dependencies
+local Job = require('plenary.job')
 
 -- Function to append text to a buffer with improved formatting
 local function append_to_buffer(text, bufnr)
@@ -189,35 +97,153 @@ local function append_to_buffer(text, bufnr)
   return true
 end
 
--- Debug logging function
-local function log_debug(message)
-  if M.config.debug then
-    print("[nvim-buddy debug] " .. message)
+-- Setup function to configure the module
+function M.setup(opts)
+  if opts then
+    -- Handle case where opts might be a boolean or unexpected type
+    if type(opts) == "table" then
+      -- Deep merge config tables
+      M.config = vim.tbl_deep_extend("force", M.config, opts)
+      
+      -- Handle backward compatibility with old config structure
+      if opts.provider and type(opts.provider) == "string" then
+        M.config.provider = opts.provider
+      end
+    else
+      vim.notify("Invalid configuration format for nvim-buddy backend", vim.log.levels.WARN)
+    end
   end
+  
+  -- Attempt to get API key from environment if not explicitly set
+  if not M.config.gemini.api_key then
+    M.config.gemini.api_key = vim.env.GEMINI_API_KEY
+    
+    if not M.config.gemini.api_key or M.config.gemini.api_key == "" then
+      vim.notify('Missing Gemini API key. Set config.gemini.api_key or GEMINI_API_KEY env variable', vim.log.levels.WARN)
+    end
+  end
+  
+  return M
 end
 
--- Format and send a request to the Gemini API
-function M.send_message(message, callback, on_chunk)
-  -- Validate API key
-  if not M.config.gemini.api_key or M.config.gemini.api_key == "" then
-    vim.notify("Missing Gemini API key", vim.log.levels.ERROR)
-    if callback then
-      callback({ error = "Missing API key" })
-    end
-    return
+-- Get the base URL for API calls
+local function get_api_url()
+  local base = M.config.gemini.endpoint
+  local model = M.config.gemini.model
+  
+  -- Remove trailing slash if present
+  if base:sub(-1) == "/" then
+    base = base:sub(1, -2)
   end
   
-  -- Prepare request
-  local request_body = vim.fn.json_encode({
-    contents = {{parts = {{text = message}}}}
+  local url = base .. "/" .. model .. ":streamGenerateContent?alt=sse"
+  
+  -- Add API key to URL
+  if M.config.gemini.api_key then
+    url = url .. "&key=" .. M.config.gemini.api_key
+  end
+  
+  return url
+end
+
+-- Add file content to be included in prompts
+function M.add_file_context(identifier, file_path)
+  -- Validate params
+  if not identifier or not file_path then
+    log_debug("Invalid parameters for adding file context")
+    return false
+  end
+  
+  -- Read the file content immediately
+  local success, content = pcall(function()
+    return table.concat(vim.fn.readfile(file_path), "\n")
+  end)
+  
+  if not success or not content or content == "" then
+    log_debug("Failed to read file: " .. file_path)
+    return false
+  end
+  
+  -- Store both the path and content
+  M.file_contexts[identifier] = {
+    path = file_path,
+    content = content
+  }
+  
+  log_debug("Added file context: " .. identifier .. " with " .. #content .. " chars")
+  return true
+end
+
+-- Process prompt to include file content from stored contexts
+local function process_prompt_with_file_contexts(prompt)
+  local original_prompt = prompt
+  local context_added = false
+  local additional_context = ""
+  
+  -- Find all file references in the form @[identifier]
+  for identifier in original_prompt:gmatch("@%[([^%]]+)%]") do
+    log_debug("Found file reference: " .. identifier)
+    
+    -- Check if we have this context stored
+    if M.file_contexts[identifier] and M.file_contexts[identifier].content then
+      -- Add the file content to the additional context
+      additional_context = additional_context .. "\n\nFile: " .. identifier .. "\n```\n" .. 
+                           M.file_contexts[identifier].content .. "\n```"
+      context_added = true
+      log_debug("Added content from file context: " .. identifier)
+    else
+      log_debug("No stored content for identifier: " .. identifier)
+    end
+  end
+  
+  -- Add additional context to the prompt if any files were processed
+  if context_added then
+    prompt = "I need help with the following. For context, here are some relevant files:\n" 
+             .. additional_context 
+             .. "\n\nMy question is: " .. original_prompt
+    log_debug("Final prompt with context was built successfully")
+  end
+  
+  return prompt
+end
+
+-- Make API request with curl
+local function make_api_request(url, prompt, completion_callback, chunk_callback)
+  -- First process the prompt to include file contexts
+  local processed_prompt = process_prompt_with_file_contexts(prompt)
+  
+  -- Then generate the request body with the processed prompt
+  local request_body = vim.json.encode({
+    contents = {
+      {
+        parts = {
+          { text = processed_prompt }
+        }
+      }
+    },
+    generationConfig = {
+      temperature = M.config.gemini.temperature,
+      topK = 40,
+      topP = 0.95,
+    }
   })
   
-  log_debug("Sending request to Gemini API")
+  -- Debug: log the length of the request body and a sample of the processed prompt
+  log_debug("Original prompt length: " .. #prompt .. " chars")
+  log_debug("Processed prompt length: " .. #processed_prompt .. " chars")
+  log_debug("Request body length: " .. #request_body .. " bytes")
+  
+  -- Print a sample of the processed prompt to verify file content is included
+  if #processed_prompt > 200 then
+    log_debug("Sample of processed prompt: " .. processed_prompt:sub(1, 100) .. "..." .. 
+             processed_prompt:sub(#processed_prompt - 100, #processed_prompt))
+  else
+    log_debug("Processed prompt: " .. processed_prompt)
+  end
+  
+  log_debug("Making API request: " .. url)
   
   -- Create the job for streaming
-  local url = get_api_url()
-  log_debug("API URL: " .. url)
-  
   local job = Job:new({
     command = 'curl',
     args = {
@@ -271,8 +297,8 @@ function M.send_message(message, callback, on_chunk)
                 log_debug("Extracted text: " .. vim.inspect(text:sub(1, 20) .. (text:len() > 20 and "..." or "")))
                 
                 -- Call the chunk handler callback
-                if on_chunk then
-                  on_chunk(text)
+                if chunk_callback then
+                  chunk_callback(text)
                 end
               end
             else
@@ -283,8 +309,8 @@ function M.send_message(message, callback, on_chunk)
                 text = text:gsub("\\n", "\n"):gsub("\\t", "\t"):gsub('\\"', '"'):gsub("\\\\", "\\")
                 log_debug("Direct text extraction: " .. text:sub(1, 20) .. (text:len() > 20 and "..." or ""))
                 
-                if on_chunk then
-                  on_chunk(text)
+                if chunk_callback then
+                  chunk_callback(text)
                 end
               else
                 log_debug("Failed to parse JSON: " .. data_content)
@@ -310,8 +336,8 @@ function M.send_message(message, callback, on_chunk)
           log_debug("stderr: " .. error_msg)
           
           -- If we have a callback, report the error
-          if callback then
-            callback({ error = "API error", details = error_msg })
+          if completion_callback then
+            completion_callback({ error = "API error", details = error_msg })
           end
         end
       end
@@ -322,9 +348,9 @@ function M.send_message(message, callback, on_chunk)
       -- Call the completion callback
       vim.schedule(function()
         if code == 0 then
-          if callback then callback({ success = true }) end
+          if completion_callback then completion_callback({ success = true }) end
         else
-          if callback then callback({ error = "Request failed with code " .. tostring(code) }) end
+          if completion_callback then completion_callback({ error = "Request failed with code " .. tostring(code) }) end
         end
       end)
     end,
@@ -334,6 +360,98 @@ function M.send_message(message, callback, on_chunk)
   job:start()
   
   return job  -- Return job object so caller can control it if needed
+end
+
+-- Send the request to Gemini API
+function M.query_gemini_api(prompt, completion_callback, chunk_callback)
+  -- Check if we have an API key
+  if not M.config.gemini.api_key then
+    log_debug("No API key configured")
+    if completion_callback then
+      completion_callback({ error = "No API key configured for Gemini API" })
+    end
+    return false
+  end
+  
+  -- Make the API request with the prompt
+  local is_streaming = M.config.streaming
+  
+  -- Directly pass the prompt to make_api_request
+  -- Do not process or modify it here - that will be done in make_api_request
+  return make_api_request(get_api_url(), prompt, completion_callback, chunk_callback)
+end
+
+-- Format and send a request to the Gemini API
+function M.send_message(message, completion_callback, chunk_callback)
+  -- Validate API key
+  if not M.config.gemini.api_key or M.config.gemini.api_key == "" then
+    vim.notify("Missing Gemini API key", vim.log.levels.ERROR)
+    if completion_callback then
+      completion_callback({ error = "Missing API key" })
+    end
+    return
+  end
+  
+  log_debug("Sending message: " .. message:sub(1, 50) .. (message:len() > 50 and "..." or ""))
+  
+  -- Call the query_gemini_api function with the message and pass all callbacks
+  return M.query_gemini_api(message, completion_callback, chunk_callback)
+end
+
+-- Get current line from the cursor position in buffer
+local function get_prompt_from_buffer(bufnr)
+  -- Get current cursor position
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  
+  -- Check if buffer is valid
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    vim.notify("Invalid buffer for getting prompt", vim.log.levels.ERROR)
+    return ""
+  end
+  
+  local current_win = nil
+  -- Find a window showing this buffer
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    if vim.api.nvim_win_get_buf(win) == bufnr then
+      current_win = win
+      break
+    end
+  end
+  
+  if not current_win then
+    -- If no window is showing the buffer, try to get all lines
+    return old_get_prompt_from_buffer(bufnr)
+  end
+  
+  -- Get the current line under cursor
+  local cursor_pos = vim.api.nvim_win_get_cursor(current_win)
+  local current_line = vim.api.nvim_buf_get_lines(bufnr, cursor_pos[1]-1, cursor_pos[1], false)[1] or ""
+  
+  -- Check if the line is empty
+  if current_line:match("^%s*$") then
+    -- Line is empty or whitespace only, use legacy method to get full buffer
+    return old_get_prompt_from_buffer(bufnr)
+  end
+  
+  -- Trim whitespace and return the line
+  return current_line:match("^%s*(.-)%s*$")
+end
+
+-- Legacy function to get all buffer content as prompt
+local function old_get_prompt_from_buffer(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  
+  -- Check if buffer is valid
+  if not vim.api.nvim_buf_is_valid(bufnr) then
+    vim.notify("Invalid buffer for getting prompt", vim.log.levels.ERROR)
+    return ""
+  end
+  
+  -- Get all lines from the buffer
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  
+  -- Concatenate lines to get the full content
+  return table.concat(lines, "\n")
 end
 
 -- Process a buffer and stream responses directly to it
@@ -435,7 +553,6 @@ function M.process_buffer(bufnr, header_bufnr)
           timer_active = false
           if timer then 
             pcall(function() timer:stop() end)
-            pcall(function() timer:close() end)
           end
         end
         
@@ -498,6 +615,7 @@ function M.process_buffer(bufnr, header_bufnr)
           end)
         end
       end,
+      -- This is our CHUNK handler - it receives text as it streams
       function(chunk)
         vim.schedule(function()
           if vim.api.nvim_buf_is_valid(bufnr) then
